@@ -11,8 +11,12 @@ import (
 	"github.com/uptrace/bun/extra/bundebug"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/mysqldialect"
+	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
+	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/driver/sqliteshim"
+	"github.com/uptrace/bun/schema"
 )
 
 var _ MetadataStore = &DatabaseStore{}
@@ -27,7 +31,7 @@ type DatabaseStorePathInfo struct {
 	OutputHash []byte `bun:"outputhash,pk"`
 	Name       string
 
-	NarHash []byte
+	NarHash []byte `bun:"narhash"`
 	Deriver string
 	System  string
 	CA      string
@@ -48,7 +52,7 @@ type DatabaseStoreNarMeta struct {
 
 	NarHash    []byte `bun:"narhash,pk"`
 	Size       uint64
-	References []DatabaseStoreNarReference `bun:"m2m:nar_references,join:NarHash=NarHash"`
+	References []DatabaseStoreNarReference
 }
 
 type DatabaseStoreNarReference struct {
@@ -60,18 +64,44 @@ type DatabaseStoreNarReference struct {
 	OutputHash []byte                 `bun:"outputhash,pk"`
 }
 
+func openDB(driverName, dsn string) (*bun.DB, error) {
+	var dialect schema.Dialect
+	var sqldb *sql.DB
+	var err error
+	if driverName == "sqlite" {
+		sqldb, err = sql.Open(sqliteshim.ShimName, dsn)
+
+		/* sqldb.SetConnMaxLifetime(0)
+		sqldb.SetMaxIdleConns(3)
+		sqldb.SetMaxOpenConns(3) */
+
+		dialect = sqlitedialect.New()
+	} else if driverName == "mysql" {
+		sqldb, err = sql.Open("mysql", dsn)
+		if err != nil {
+			return nil, err
+		}
+
+		dialect = mysqldialect.New()
+	} else if driverName == "postgres" {
+		sqldb = sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+		err = sqldb.Ping()
+		if err != nil {
+			return nil, err
+		}
+		dialect = pgdialect.New()
+	} else {
+		return nil, fmt.Errorf("invalid database driver: %s", driverName)
+	}
+	db := bun.NewDB(sqldb, dialect)
+	return db, nil
+}
+
 func NewDatabaseStore(ctx context.Context, driverName, dsn string) (*DatabaseStore, error) {
-	// TODO: don't hardcode sqlite
-	sqldb, err := sql.Open(sqliteshim.ShimName, "file::memory:?cache=shared")
+	db, err := openDB(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("unable to use data source name: %v", err)
 	}
-
-	sqldb.SetConnMaxLifetime(0)
-	sqldb.SetMaxIdleConns(3)
-	sqldb.SetMaxOpenConns(3)
-
-	db := bun.NewDB(sqldb, sqlitedialect.New())
 
 	db.AddQueryHook(bundebug.NewQueryHook(
 		bundebug.WithVerbose(true),
@@ -81,21 +111,23 @@ func NewDatabaseStore(ctx context.Context, driverName, dsn string) (*DatabaseSto
 	db.RegisterModel((*DatabaseStoreNarReference)(nil))
 	db.RegisterModel((*DatabaseStorePathInfo)(nil))
 	db.RegisterModel((*DatabaseStoreNarinfoSignature)(nil))
-	//db.RegisterModel((*databaseStorNarMeta)(nil))
+	db.RegisterModel((*DatabaseStoreNarMeta)(nil))
 
-	_, err = db.NewCreateTable().Model((*DatabaseStorePathInfo)(nil)).Exec(ctx)
+	_, err = db.NewCreateTable().Model((*DatabaseStorePathInfo)(nil)).IfNotExists().Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.NewCreateTable().Model((*DatabaseStoreNarinfoSignature)(nil)).Exec(ctx)
+	_, err = db.NewCreateTable().Model((*DatabaseStoreNarinfoSignature)(nil)).IfNotExists().Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.NewCreateTable().Model((*DatabaseStoreNarReference)(nil)).Exec(ctx)
+	_, err = db.NewCreateTable().Model((*DatabaseStoreNarReference)(nil)).IfNotExists().Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.NewCreateTable().Model((*DatabaseStoreNarMeta)(nil)).Exec(ctx)
+	// `bun:"m2m:nar_references,join:NarHash=NarHash"`
+	_, err = db.NewCreateTable().Model((*DatabaseStoreNarMeta)(nil)).IfNotExists().ForeignKey(`(narhash) REFERENCES nar_references (narhash) ON DELETE CASCADE`).
+		Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +176,6 @@ func (ds *DatabaseStore) GetPathInfo(ctx context.Context, outputHash []byte) (*P
 
 	return pathInfo, nil
 }
-
-// TODO: not nulls, verify foreign key constraints, on delete cascade
 
 func (ds *DatabaseStore) PutPathInfo(ctx context.Context, pathInfo *PathInfo) error {
 	err := pathInfo.Check()

@@ -15,8 +15,11 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/stretchr/testify v1.7.0
 	github.com/ulikunitz/xz v0.5.10
-	github.com/uptrace/bun v1.0.19
+	github.com/uptrace/bun v1.0.20
+	github.com/uptrace/bun/dialect/mysqldialect v1.0.20
+	github.com/uptrace/bun/dialect/pgdialect v1.0.20
 	github.com/uptrace/bun/dialect/sqlitedialect v1.0.19
+	github.com/uptrace/bun/driver/pgdriver v1.0.20
 	github.com/uptrace/bun/driver/sqliteshim v1.0.19
-	github.com/uptrace/bun/extra/bundebug v1.0.19 // indirect
+	github.com/uptrace/bun/extra/bundebug v1.0.19
 )

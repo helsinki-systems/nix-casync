@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,8 +36,8 @@ func main() {
 		}
 
 		// initialize narinfo store
-		narinfoPath := path.Join(CLI.Serve.CachePath, "narinfo")
-		metadataStore, err := metadatastore.NewFileStore(narinfoPath)
+		// narinfoPath := path.Join(CLI.Serve.CachePath, "narinfo")
+		metadataStore, err := metadatastore.NewDatabaseStore(context.Background(), "sqlite", "file:test.sqlite")
 		if err != nil {
 			log.Fatal(err)
 		}
